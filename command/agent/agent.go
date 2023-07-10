@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -1280,7 +1281,34 @@ func (a *Agent) ShouldReload(newConfig *Config) (agent, http bool) {
 		agent = true
 	}
 
+	if a.config.Server != nil || a.config.Server.Enabled {
+		// Allow the ability to only reload Num Scheduler configuration
+		if a.config.Server.NumSchedulers != newConfig.Server.NumSchedulers {
+			agent = true
+		}
+		if a.shouldReloadEnabledScheduler(newConfig.Server.EnabledSchedulers) {
+			agent = true
+		}
+	}
+
 	return agent, http
+}
+
+// shouldReloadEnabledScheduler determines if enabled scheduler configuration needs to be reloaded
+func (a *Agent) shouldReloadEnabledScheduler(schedulers []string) bool {
+	// Allow the ability to only reload Enabled Scheduler configurations
+	newSchedulers := make([]string, len(schedulers))
+	copy(newSchedulers, schedulers)
+	sort.Strings(newSchedulers)
+
+	oldSchedulers := make([]string, len(a.config.Server.EnabledSchedulers))
+	copy(oldSchedulers, a.config.Server.EnabledSchedulers)
+	for i, v := range newSchedulers {
+		if oldSchedulers[i] != v {
+			return true
+		}
+	}
+	return false
 }
 
 // Reload handles configuration changes for the agent. Provides a method that
@@ -1347,6 +1375,17 @@ func (a *Agent) Reload(newConfig *Config) error {
 	} else if !newConfig.TLSConfig.IsEmpty() && current.TLSConfig.IsEmpty() {
 		a.logger.Info("upgrading from plaintext configuration to TLS")
 		fullUpdateTLSConfig()
+	}
+
+	if current.Server != nil || current.Server.Enabled {
+		if current.Server.NumSchedulers != newConfig.Server.NumSchedulers {
+			a.logger.Info("updating NumSchedulers", "num_schedulers", *newConfig.Server.NumSchedulers)
+			current.Server.NumSchedulers = newConfig.Server.NumSchedulers
+		}
+		if a.shouldReloadEnabledScheduler(newConfig.Server.EnabledSchedulers) {
+			a.logger.Info("updating EnabledSchedulers", "enabled_schedulers", newConfig.Server.EnabledSchedulers)
+			current.Server.EnabledSchedulers = newConfig.Server.EnabledSchedulers
+		}
 	}
 
 	// Set agent config to the updated config
